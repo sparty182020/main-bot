@@ -5,9 +5,10 @@ const strikeMessages = {
         "Dear $NAME",
         "",
         "You have received a strike in r/$SUBREDDIT for the following reason:",
+        "",
         "$REASON",
         "",
-        "This is your first strike. Your next strike will result in a one day ban.",
+        "This is your first strike and therefore, you are only receiving a warning. Your next strike will result in a one day ban.",
         "",
         "Please review the rules of the subreddit and try to avoid breaking them again.",
         "",
@@ -24,9 +25,10 @@ const strikeMessages = {
         "Dear $NAME",
         "",
         "You have received a strike in r/$SUBREDDIT for the following reason:",
+        "",
         "$REASON",
         "",
-        "This is your second strike. Your next strike will result in a one year ban.",
+        "This is your second strike and therefore, you are receiving a one day ban. All future strikes will result in a one year ban.",
         "",
         "Please review the rules of the subreddit and try to avoid breaking them again.",
         "",
@@ -43,9 +45,10 @@ const strikeMessages = {
         "Dear $NAME",
         "",
         "You have received a strike in r/$SUBREDDIT for the following reason:",
+        "",
         "$REASON",
         "",
-        "This is your $STRIKES strike. This and all future strikes will result in a one year ban.",
+        "This is your $STRIKES strike and therefore, this and all future strikes will result in a one year ban.",
         "",
         "Please review the rules of the subreddit and try to avoid breaking them again.",
         "",
@@ -61,7 +64,7 @@ const strikeMessages = {
     removal: [
         "Dear $NAME",
         "",
-        "You have been absolved of a strike. You are now at $STRIKES.",
+        "You have been absolved of a strike. You are now at $STRIKES strike(s).",
         "",
         "If you have any questions, please feel free to message the moderators.",
         "",
@@ -75,7 +78,7 @@ const strikeMessages = {
     reset: [
         "Dear $NAME",
         "",
-        "You have your strikes reset. All previous strikes have been removed and you are now free to post in r/$SUBREDDIT.",
+        "You have had your strikes reset. All previous strikes have been removed and you are now free to post in r/$SUBREDDIT.",
         "",
         "If you have any questions, please feel free to message the moderators.",
         "",
@@ -87,6 +90,22 @@ const strikeMessages = {
         "---"
     ],
 }
+
+const ReApprovalBase = [
+    "Dear $NAME",
+    "",
+    "Your $TYPE was accidentally removed by a moderator. We have re-approved it and it should be visible again.",
+    "We sincerely apologize for the inconvenience.",
+    "",
+    "If you have any questions, please feel free to message the moderators.",
+    "",
+    "Thank you for your cooperation.",
+    "",
+    "Signed",
+    "r/$SUBREDDIT moderators",
+    "",
+    "---"
+]
 const reddit = new RedditAPIClient()
 const kv = new KeyValueStorage();
 
@@ -153,7 +172,7 @@ class Strikes {
 
         if (strikes === 0) return { success: false, message: `u/${author} does not have any strikes!`, };
 
-        if (strikes >= 2) subreddit.getBannedUsers({username: author}).children.filter((user) => user.username === author).forEach(async (user) => await subreddit.unbanUser(user.username));
+        if (strikes >= 2) subreddit.getBannedUsers({ username: author }).children.filter((user) => user.username === author).forEach(async (user) => await subreddit.unbanUser(user.username));
 
         await Strikes.setAuthorStrikes(author, --strikes, metadata);
 
@@ -182,7 +201,7 @@ class Strikes {
 
         if (hadStrikes === 0) return { success: false, message: `u/${author} does not have any strikes!`, };
 
-        if (hadStrikes >= 2) subreddit.getBannedUsers({username: author}).children.filter((user) => user.username === author).forEach(async (user) => await subreddit.unbanUser(user.username));
+        if (hadStrikes >= 2) subreddit.getBannedUsers({ username: author }).children.filter((user) => user.username === author).forEach(async (user) => await subreddit.unbanUser(user.username));
 
         await Strikes.setAuthorStrikes(author, 0, metadata);
 
@@ -286,7 +305,31 @@ class Strikes {
             message: result,
         };
     }
+}
 
+class ModActions {
+    public static async undoRemoval(event: PostContextActionEvent | CommentContextActionEvent, metadata?: Metadata) {
+        const subreddit = (await reddit.getCurrentSubreddit(metadata));
+        const author = (event.context === Context.POST ? event.post.author : event.comment.author);
+        const ID = (event.context === Context.POST ? event.post.linkId : event.comment.linkId);
+        const contextType = event.context;
+
+        if (!ID || !contextType || !subreddit || !author) return { success: false, message: `Metadata is missing!`, };
+        const reason = event.userInput?.fields.find((f) => f.key === 'reason')?.response || '';
+        const reasonMessage = ReApprovalBase.join('\n').replace(/($SUBREDDIT)/gmi, subreddit.name).replace(/($NAME)/gmi, author).replace(/($TYPE)/gmi, contextType);
+        reddit.approve(ID, metadata);
+
+        reddit.sendPrivateMessageAsSubreddit(
+            {
+                fromSubredditName: subreddit.name,
+                to: author,
+                subject: `Your post/comment was approved on ${subreddit.name}`,
+                text: reasonMessage,
+            }
+        )
+
+        return { success: true, message: `Approved ${contextType} by u/${author}!`, };
+    }
 }
 
 Devvit.addActions([
@@ -295,7 +338,7 @@ Devvit.addActions([
         description: 'Remove this and add a strike to the author',
         context: Context.POST,
         userContext: UserContext.MODERATOR,
-        userInput: new ConfigFormBuilder().textarea('reason','Reason for strike').build(),
+        userInput: new ConfigFormBuilder().textarea('reason', 'Reason for strike').build(),
         handler: Strikes.strike,
     },
     {
@@ -303,7 +346,7 @@ Devvit.addActions([
         description: 'Remove this and add a strike to the author',
         context: Context.COMMENT,
         userContext: UserContext.MODERATOR,
-        userInput: new ConfigFormBuilder().textarea('reason','Reason for strike').build(),
+        userInput: new ConfigFormBuilder().textarea('reason', 'Reason for strike').build(),
         handler: Strikes.strike,
     },
     {
@@ -347,6 +390,22 @@ Devvit.addActions([
         context: Context.COMMENT,
         userContext: UserContext.MODERATOR,
         handler: Strikes.clearStrikes,
+    },
+    {
+        name: 'Undo Removal',
+        description: 'Undo the removal of this post/comment',
+        context: Context.POST,
+        userContext: UserContext.MODERATOR,
+        userInput: new ConfigFormBuilder().textarea('reason', 'Reason for undoing removal').build(),
+        handler: ModActions.undoRemoval,
+    },
+    {
+        name: 'Undo Removal',
+        description: 'Undo the removal of this post/comment',
+        context: Context.COMMENT,
+        userContext: UserContext.MODERATOR,
+        userInput: new ConfigFormBuilder().textarea('reason', 'Reason for undoing removal').build(),
+        handler: ModActions.undoRemoval,
     },
 ]);
 
