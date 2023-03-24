@@ -104,6 +104,11 @@ const ReApprovalBase = [
     "Signed",
     "r/$SUBREDDIT moderators",
     "",
+    "---",
+    "Note from the moderator:",
+    "",
+    "$REASON",
+    "",
     "---"
 ]
 const reddit = new RedditAPIClient()
@@ -316,7 +321,7 @@ class ModActions {
 
         if (!ID || !contextType || !subreddit || !author) return { success: false, message: `Metadata is missing!`, };
         const reason = event.userInput?.fields.find((f) => f.key === 'reason')?.response || '';
-        const reasonMessage = ReApprovalBase.join('\n').replace(/($SUBREDDIT)/gmi, subreddit.name).replace(/($NAME)/gmi, author).replace(/($TYPE)/gmi, contextType);
+        const reasonMessage = ReApprovalBase.join('\n').replace(/($SUBREDDIT)/gmi, subreddit.name).replace(/($NAME)/gmi, author).replace(/($TYPE)/gmi, contextType).replace(/($REASON)/gmi, reason);
         reddit.approve(ID, metadata);
 
         reddit.sendPrivateMessageAsSubreddit(
